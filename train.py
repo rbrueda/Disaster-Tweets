@@ -7,11 +7,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
 from nltk.probability import FreqDist
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, Conv1D, GlobalMaxPooling1D, Dense, Dropout
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import fasttext #for vector embeddings 
+import fasttext.util
+#start with an learning rate scheduler instead of early stopping
+from tensorflow.keras.callbacks import EarlyStopping
 
 #todo: optimize the code better -- add better optimizations for the data
 #todo: add lemmanization for data preprocessing - generalization
@@ -19,13 +24,19 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 #todo: add Word2Vec or Glove instead of normal embedding
 #todo: after manual tuning -- apply Baysian optimization -- batch_size, filters, kernel_size
 #todo: apply TF-IDF visualization or bigram analysis to see co-occuring words
-#todo: based on the output I get, apply early stopping!!
-#todo: try Learning Rate Scheduling to reduce learning rate when model plateaus
 #todo: plot the ROC_AUC curves
 
 # Download NLTK data
 nltk.download('stopwords')
 nltk.download('punkt')
+nltk.download('wordnet')
+nltk.download('omw-1.4')  # Sometimes needed for WordNet in NLTK
+
+
+fasttext.util.download_model('en', if_exists='ignore') #download fasttext model
+ft_model = fasttext.load_model('cc.en.300.bin') #load FastText 300-dim embeddings
+
+lemmanizer = WordNetLemmatizer()
 
 # Load dataset
 df = pd.read_csv('train.csv')
@@ -43,6 +54,7 @@ def clean_text(text):
     tokens = word_tokenize(text)
     stop_words = set(stopwords.words('english'))
     tokens = [word for word in tokens if word not in stop_words]  # Remove stopwords
+    tokens = [lemmanizer.lemmatize(word) for word in tokens] #lemmanize words
     return tokens
 
 # Apply preprocessing
@@ -62,6 +74,15 @@ freq_dist = FreqDist(all_words)
 # Get top words
 vocab = [word for word, freq in freq_dist.most_common(MAX_FEATURES - 1)]
 word_index = {word: i + 1 for i, word in enumerate(vocab)}  # Map unknown words to 1
+
+EMBEDDING_DIM = 300 #since FastText has 300-dimensional vectors
+
+embedding_matrix = np.zeros((MAX_FEATURES, EMBEDDING_DIM))
+
+for word, i in word_index.items():
+    if i < MAX_FEATURES:
+        embedding_matrix[i] = ft_model.get_word_vector(word)  # Get FastText vector
+
 
 # Convert text tokens into sequences of indices
 df['sequences'] = df['tokens'].apply(lambda tokens: [word_index.get(word, 1) for word in tokens])  # Use 1 for unknown words
@@ -84,7 +105,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 
 # CNN Model
 model = Sequential([
-    Embedding(input_dim=MAX_FEATURES, output_dim=128, input_length=MAX_LEN),  # Word embeddings
+    Embedding(input_dim=MAX_FEATURES, output_dim=EMBEDDING_DIM, input_length=MAX_LEN, weights=[embedding_matrix], trainable=False),  # Word embeddings
     Conv1D(filters=64, kernel_size=3, activation='relu'),  # Convolution layer
     GlobalMaxPooling1D(),  # Max pooling
     Dense(128, activation='relu'),  # Fully connected layer
@@ -98,12 +119,21 @@ model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy']
 # Summary
 model.summary()
 
+# Early stopping: stops training when validation loss doesn't improve for 5 epochs
+early_stopping = EarlyStopping(
+    monitor='val_loss',        # Monitor validation loss
+    patience=5,                # Number of epochs to wait for improvement
+    restore_best_weights=True, # Restores the model weights from the best epoch
+    verbose=1                   # Print messages when early stopping is triggered
+)
+
 # Train the model
 history = model.fit(
     X_train, y_train,
     epochs=10,
     batch_size=32,
     validation_data=(X_test, y_test),
+    callbacks=[early_stopping],
     verbose=1
 )
 
