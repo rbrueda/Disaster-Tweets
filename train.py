@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
 import pandas as pd
 import re
@@ -9,6 +11,7 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk.probability import FreqDist
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, Conv1D, GlobalMaxPooling1D, Dense, Dropout
 from sklearn.model_selection import train_test_split
@@ -17,6 +20,8 @@ import fasttext #for vector embeddings
 import fasttext.util
 #start with an learning rate scheduler instead of early stopping
 from tensorflow.keras.callbacks import EarlyStopping
+from transformers import DistilBertTokenizer, TFDistilBertModel
+from tensorflow.keras.layers import Lambda
 
 #todo: optimize the code better -- add better optimizations for the data
 #todo: add lemmanization for data preprocessing - generalization
@@ -25,6 +30,10 @@ from tensorflow.keras.callbacks import EarlyStopping
 #todo: after manual tuning -- apply Baysian optimization -- batch_size, filters, kernel_size
 #todo: apply TF-IDF visualization or bigram analysis to see co-occuring words
 #todo: plot the ROC_AUC curves
+
+#download tokenizer
+tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+distilbert = TFDistilBertModel.from_pretrained("distilbert-base-uncased")
 
 # Download NLTK data
 nltk.download('stopwords')
@@ -51,14 +60,14 @@ def clean_text(text):
     text = re.sub(r'@\w+|\#', '', text)  # Remove mentions & hashtags
     text = re.sub(r'[^A-Za-z0-9\s]', '', text)  # Remove special characters
     text = re.sub(r'\s+', ' ', text).strip()  # Remove extra spaces
-    tokens = word_tokenize(text)
-    stop_words = set(stopwords.words('english'))
-    tokens = [word for word in tokens if word not in stop_words]  # Remove stopwords
-    tokens = [lemmanizer.lemmatize(word) for word in tokens] #lemmanize words
-    return tokens
+    # tokens = word_tokenize(text)
+    # stop_words = set(stopwords.words('english'))
+    # tokens = [word for word in tokens if word not in stop_words]  # Remove stopwords
+    # tokens = [lemmanizer.lemmatize(word) for word in tokens] #lemmanize words
+    return text
 
 # Apply preprocessing
-df['tokens'] = df['text'].apply(clean_text)
+df['clean_text'] = df['text'].apply(clean_text)
 
 # Convert labels to integer
 df['target'] = df['target'].astype(int)
@@ -67,51 +76,82 @@ df['target'] = df['target'].astype(int)
 MAX_FEATURES = 10000  # Vocabulary size
 MAX_LEN = 100  # Max sequence length
 
-# Vocabulary frequency distribution
-all_words = [word for tokens in df['tokens'] for word in tokens]
-freq_dist = FreqDist(all_words)
+#Tokenization (DistilBERT expects tokenized input)
+tokens = tokenizer(df['clean_text'].tolist(), truncation=True, padding='max_length', max_length=MAX_LEN, return_tensors="tf")
 
-# Get top words
-vocab = [word for word, freq in freq_dist.most_common(MAX_FEATURES - 1)]
-word_index = {word: i + 1 for i, word in enumerate(vocab)}  # Map unknown words to 1
+# # Vocabulary frequency distribution
+# all_words = [word for tokens in df['tokens'] for word in tokens]
+# freq_dist = FreqDist(all_words)
 
-EMBEDDING_DIM = 300 #since FastText has 300-dimensional vectors
+# # Get top words
+# vocab = [word for word, freq in freq_dist.most_common(MAX_FEATURES - 1)]
+# word_index = {word: i + 1 for i, word in enumerate(vocab)}  # Map unknown words to 1
 
-embedding_matrix = np.zeros((MAX_FEATURES, EMBEDDING_DIM))
+# EMBEDDING_DIM = 300 #since FastText has 300-dimensional vectors
 
-for word, i in word_index.items():
-    if i < MAX_FEATURES:
-        embedding_matrix[i] = ft_model.get_word_vector(word)  # Get FastText vector
+# embedding_matrix = np.zeros((MAX_FEATURES, EMBEDDING_DIM))
+
+# for word, i in word_index.items():
+#     if i < MAX_FEATURES:
+#         embedding_matrix[i] = ft_model.get_word_vector(word)  # Get FastText vector
 
 
-# Convert text tokens into sequences of indices
-df['sequences'] = df['tokens'].apply(lambda tokens: [word_index.get(word, 1) for word in tokens])  # Use 1 for unknown words
+# # Convert text tokens into sequences of indices
+# df['sequences'] = df['tokens'].apply(lambda tokens: [word_index.get(word, 1) for word in tokens])  # Use 1 for unknown words
 
-# Padding function
-def pad_sequence(seq, max_len):
-    if len(seq) > max_len:
-        return seq[:max_len]  # Truncate if too long
-    else:
-        return seq + [0] * (max_len - len(seq))  # Pad with zeros
+# # Padding function
+# def pad_sequence(seq, max_len):
+#     if len(seq) > max_len:
+#         return seq[:max_len]  # Truncate if too long
+#     else:
+#         return seq + [0] * (max_len - len(seq))  # Pad with zeros
 
-df['padded_sequences'] = df['sequences'].apply(lambda seq: pad_sequence(seq, MAX_LEN))
+# df['padded_sequences'] = df['sequences'].apply(lambda seq: pad_sequence(seq, MAX_LEN))
 
 # Convert to NumPy arrays
-X = np.array(df['padded_sequences'].tolist())  # Input
+X = tokens['input_ids']  # Input
 y = df['target'].values  # Output
 
 # Train-test split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X.numpy(), y, test_size=0.2, random_state=42)
 
-# CNN Model
-model = Sequential([
-    Embedding(input_dim=MAX_FEATURES, output_dim=EMBEDDING_DIM, input_length=MAX_LEN, weights=[embedding_matrix], trainable=False),  # Word embeddings
-    Conv1D(filters=64, kernel_size=3, activation='relu'),  # Convolution layer
-    GlobalMaxPooling1D(),  # Max pooling
-    Dense(128, activation='relu'),  # Fully connected layer
-    Dropout(0.5),  # Regularization
-    Dense(1, activation='sigmoid')  # Output layer
-])
+#load DistilBERT Model (Frozen to Save Compute)
+distilbert = TFDistilBertModel.from_pretrained('distilbert-base-uncased', output_hidden_states=False)
+distilbert.trainable = False #freeze parameters to avoid heavy computation (change later to see if computation doesnt change drastically)
+
+# CNN + DistilBERT Model
+inputs = tf.keras.layers.Input(shape=(MAX_LEN, ), dtype=tf.int32)
+
+# Compute attention mask inside a Lambda layer
+attention_mask_layer = Lambda(lambda x: tf.cast(tf.math.not_equal(x, 0), tf.int32))
+attention_mask = attention_mask_layer(inputs)
+
+# Pass both input_ids and attention_mask
+bert_output = distilbert(inputs, attention_mask=attention_mask)[0]
+
+
+conv1 = tf.keras.layers.Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(bert_output)
+conv2 = tf.keras.layers.Conv1D(filters=128, kernel_size=5, activation='relu', padding='same')(bert_output)
+
+merged = tf.keras.layers.Concatenate()([conv1, conv2]) #combine multi-scale features
+pooled = tf.keras.layers.GlobalMaxPooling1D()(merged)
+
+dense = tf.keras.layers.Dense(128, activation='relu')(pooled)
+dropout = tf.keras.layers.Dropout(0.5)(dense)
+
+output = tf.keras.layers.Dense(1, activation='sigmoid')(dropout) #only 1 result
+
+model = tf.keras.models.Model(inputs=inputs, outputs=output)
+
+
+# model = Sequential([
+#     Embedding(input_dim=MAX_FEATURES, output_dim=EMBEDDING_DIM, input_length=MAX_LEN, weights=[embedding_matrix], trainable=False),  # Word embeddings
+#     Conv1D(filters=64, kernel_size=3, activation='relu'),  # Convolution layer
+#     GlobalMaxPooling1D(),  # Max pooling
+#     Dense(128, activation='relu'),  # Fully connected layer
+#     Dropout(0.5),  # Regularization
+#     Dense(1, activation='sigmoid')  # Output layer
+# ])
 
 # Compile Model
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
@@ -120,21 +160,21 @@ model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy']
 model.summary()
 
 # Early stopping: stops training when validation loss doesn't improve for 5 epochs
-early_stopping = EarlyStopping(
-    monitor='val_loss',        # Monitor validation loss
-    patience=5,                # Number of epochs to wait for improvement
-    restore_best_weights=True, # Restores the model weights from the best epoch
-    verbose=1                   # Print messages when early stopping is triggered
-)
+# early_stopping = EarlyStopping(
+#     monitor='val_loss',        # Monitor validation loss
+#     patience=5,                # Number of epochs to wait for improvement
+#     restore_best_weights=True, # Restores the model weights from the best epoch
+#     verbose=1                   # Print messages when early stopping is triggered
+# )
 
 # Train the model
 history = model.fit(
     X_train, y_train,
     epochs=10,
     batch_size=32,
-    validation_data=(X_test, y_test),
-    callbacks=[early_stopping],
-    verbose=1
+    validation_data=(X_test, y_test)
+    # callbacks=[early_stopping],
+    # verbose=1
 )
 
 # Predicting probabilities
