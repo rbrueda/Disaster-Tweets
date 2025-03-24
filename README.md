@@ -17,7 +17,7 @@ python3 train-model.py
 - tokenized words and converted to sequences of indices
 
 ## Model Features
--CNN + MultiAttention Layer + FastText word embeddings
+- CNN + MultiAttention Layer + FastText word embeddings
 - Added hybrid pooling - Average and Max Pooling
 - L2 regularization + Dropouts between layers
 - Applied learning rate scheduler and early stopping for preventing excessive overfitting
