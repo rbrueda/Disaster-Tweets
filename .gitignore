@@ -16,3 +16,13 @@ glove.6B.300d.txt
 cc.en.300.bin
 cc.en.300.bin.gz
 .ipynb_checkpoints
+train-cnn-distil-2.py
+train-cnn-distil.py
+train-cnn-fasttext-2.py
+train-cnn-fasttext-4.py
+train-cnn-fasttext-tuning.py
+train-cnn-fasttext.py
+train-LSTM-GloVe.py
+train.py
+tuner_dir
+tuning

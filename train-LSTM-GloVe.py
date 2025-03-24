@@ -17,6 +17,9 @@ from tensorflow.keras.callbacks import ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import time
+from tensorflow.keras.callbacks import EarlyStopping
+
 
 # Download NLTK data
 nltk.download('stopwords')
@@ -99,16 +102,33 @@ model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accurac
 # Learning rate scheduler
 lr_scheduler = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, verbose=1)
 
+#record the start time
+start_time = time.time()
+
+early_stopping = EarlyStopping(
+    monitor='val_loss',        
+    patience=5,                
+    restore_best_weights=True, 
+    verbose=1                  
+)
+
+
 # Train model
 history = model.fit(
     X_train, y_train,
-    epochs=15,
+    epochs=10,
     batch_size=32,
     validation_data=(X_test, y_test),
     class_weight=class_weight_dict,
-    callbacks=[lr_scheduler],
+    callbacks=[lr_scheduler, early_stopping],
     verbose=1
 )
+
+end_time = time.time()
+
+elapsed_time = end_time - start_time
+
+print(f"Model training took: {elapsed_time:.2f} seconds.")
 
 # Evaluate model
 y_pred_prob = model.predict(X_test)
