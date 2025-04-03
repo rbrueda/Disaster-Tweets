@@ -27,3 +27,6 @@ python3 train-model.py
 - Precison
 - Recall
 - F1 Score
+  
+## Research Paper
+https://drive.google.com/file/d/11BR-lSOaI388ehZN8wHtaO0kDUyqG1NU/view?usp=sharing 
